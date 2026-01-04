@@ -206,6 +206,9 @@ def dict_to_jsonstr(data: dict) -> str:
 
 app = FastAPI(title="火山引擎 HUB API", description="火山引擎HUB服务")
 
+@app.get("/", response_model=Dict, summary="火山代理")
+async def home():
+    return {"message": "欢迎使用火山引擎HUB代理服务"}
 
 @app.post("/", response_model=Dict, summary="火山代理")
 async def api_proxy(Action: str = "ListUsers",
