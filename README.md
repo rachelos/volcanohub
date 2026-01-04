@@ -8,7 +8,7 @@
 docker run -d -p 8000:8000 \
   -e VOLCENGINE_AK="your_access_key" \
   -e VOLCENGINE_SK="your_secret_key" \
-  ghcr.io/volcengine/volcano-api:latest
+  ghcr.io/rachelos/volcanohub:latest
 ```
 ## 功能特性
 
