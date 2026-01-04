@@ -1,0 +1,237 @@
+# coding:utf-8
+"""
+Copyright (year) Beijing Volcano Engine Technology Ltd.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+"""
+
+import datetime
+import hashlib
+import hmac
+import os
+from typing import Dict
+from urllib.parse import quote
+
+import requests
+from fastapi import FastAPI,Body
+from fastapi.responses import JSONResponse
+
+# 以下参数视服务不同而不同，一个服务内通常是一致的
+Service = "cv" #iam
+Version = "2018-01-01"
+Region = "cn-north-1"
+Host = "open.volcengineapi.com"
+ContentType = "application/json; charset=utf-8"
+
+
+
+
+# 请求的凭证，从IAM或者STS服务中获取
+AK = os.getenv("VOLCENGINE_AK", "")
+SK = os.getenv("VOLCENGINE_SK", "")
+
+# 当使用临时凭证时，需要使用到SessionToken传入Header，并计算进SignedHeader中，请自行在header参数中添加X-Security-Token头
+# SessionToken = ""
+
+
+def norm_query(params):
+    query = ""
+    for key in sorted(params.keys()):
+        if type(params[key]) == list:
+            for k in params[key]:
+                query = (
+                        query + quote(key, safe="-_.~") + "=" + quote(k, safe="-_.~") + "&"
+                )
+        else:
+            query = (query + quote(key, safe="-_.~") + "=" + quote(params[key], safe="-_.~") + "&")
+    query = query[:-1]
+    return query.replace("+", "%20")
+
+
+# 第一步：准备辅助函数。
+# sha256 非对称加密
+def hmac_sha256(key: bytes, content: str):
+    return hmac.new(key, content.encode("utf-8"), hashlib.sha256).digest()
+
+
+# sha256 hash算法
+def hash_sha256(content: str):
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+# 第二步：签名请求函数
+def request(method, date, query, header, ak, sk, action, body,version=Version,region=Region,service=Service,host=Host,isProxy=False):
+    # 第三步：创建身份证明。其中的 Service 和 Region 字段是固定的。ak 和 sk 分别代表
+    # AccessKeyID 和 SecretAccessKey。同时需要初始化签名结构体。一些签名计算时需要的属性也在这里处理。
+    # 初始化身份证明结构体
+    credential = {
+        "access_key_id": ak,
+        "secret_access_key": sk,
+        "service": service,
+        "region": region,
+    }
+    # 初始化签名结构体
+    request_param = {
+        "body": body,
+        "host": host,
+        "path": "/",
+        "method": method,
+        "content_type": ContentType,
+        "date": date,
+        "query": {"Action": action, "Version": version, **query},
+    }
+    # body 已经在 proxy 函数中处理过，这里不需要再处理 None
+    # 第四步：接下来开始计算签名。在计算签名前，先准备好用于接收签算结果的 signResult 变量，并设置一些参数。
+    # 初始化签名结果的结构体
+    x_date = request_param["date"].strftime("%Y%m%dT%H%M%SZ")
+    short_x_date = x_date[:8]
+    x_content_sha256 = hash_sha256(str(request_param["body"]))
+    sign_result = {
+        "Host": request_param["host"],
+        "X-Content-Sha256": x_content_sha256,
+        "X-Date": x_date,
+        "Content-Type": request_param["content_type"],
+    }
+    # 第五步：计算 Signature 签名。
+    signed_headers_str = ";".join(
+        ["content-type", "host", "x-content-sha256", "x-date"]
+    )
+    # signed_headers_str = signed_headers_str + ";x-security-token"
+    canonical_request_str = "\n".join(
+        [request_param["method"].upper(),
+         request_param["path"],
+         norm_query(request_param["query"]),
+         "\n".join(
+             [
+                 "content-type:" + request_param["content_type"],
+                 "host:" + request_param["host"],
+                 "x-content-sha256:" + x_content_sha256,
+                 "x-date:" + x_date,
+             ]
+         ),
+         "",
+         signed_headers_str,
+         x_content_sha256,
+         ]
+    )
+
+    # 打印正规化的请求用于调试比对
+    # print(canonical_request_str)
+    hashed_canonical_request = hash_sha256(canonical_request_str)
+
+    # 打印hash值用于调试比对
+    # print(hashed_canonical_request)
+    credential_scope = "/".join([short_x_date, credential["region"], credential["service"], "request"])
+    string_to_sign = "\n".join(["HMAC-SHA256", x_date, credential_scope, hashed_canonical_request])
+
+    # 打印最终计算的签名字符串用于调试比对
+    # print("SIGN",string_to_sign)
+    k_date = hmac_sha256(credential["secret_access_key"].encode("utf-8"), short_x_date)
+    k_region = hmac_sha256(k_date, credential["region"])
+    k_service = hmac_sha256(k_region, credential["service"])
+    k_signing = hmac_sha256(k_service, "request")
+    signature = hmac_sha256(k_signing, string_to_sign).hex()
+
+    sign_result["Authorization"] = "HMAC-SHA256 Credential={}, SignedHeaders={}, Signature={}".format(
+        credential["access_key_id"] + "/" + credential_scope,
+        signed_headers_str,
+        signature,
+    )
+    header = {**header, **sign_result}
+    # header = {**header, **{"X-Security-Token": SessionToken}}
+    # 第六步：将 Signature 签名写入 HTTP Header 中，并发送 HTTP 请求。
+    if isProxy:
+        r = requests.request(method=method,
+                         url="https://{}{}".format(request_param["host"], request_param["path"]),
+                         headers=header,
+                         params=request_param["query"],
+                         data=request_param["body"],
+                         )
+        return r.json()
+    return header
+
+# datetime.utcnow() 在 3.12+ 已经过期，使用如下方法兼容
+def utc_now():
+
+    try:
+        from datetime import timezone
+        return datetime.datetime.now(timezone.utc)
+    except ImportError:
+        class UTC(datetime.tzinfo):
+            def utcoffset(self, _):
+                return datetime.timedelta(0)
+            def tzname(self, _):
+                return "UTC"
+            def dst(self, _):
+                return datetime.timedelta(0)
+        return datetime.datetime.now(UTC())
+    
+def proxy(action="ListUsers",body=None,version=Version,region=Region,service=Service,host=Host,isProxy=False):
+    now = utc_now()
+    # 将字典类型的body转换为字符串
+    if isinstance(body, dict):
+        body_str = dict_to_jsonstr(body)
+    elif body is None:
+        body_str = ""
+    else:
+        body_str = str(body)
+    response_body = request("POST", now, {"Limit": "2"}, {}, AK, SK, action, body_str,version,region,service,host,isProxy)
+    return response_body
+
+def dict_to_jsonstr(data: dict) -> str:
+    """
+    将字典转换为 JSON 字符串
+    Args:
+        data (dict): 要转换的字典
+    Returns:
+        str: JSON 格式的字符串
+    """
+    import json
+    return json.dumps(data, ensure_ascii=False)
+
+app = FastAPI(title="火山引擎 IAM API", description="火山引擎 IAM 服务 API 签名接口")
+
+
+@app.post("/", response_model=Dict, summary="火山代理")
+async def api_get_sign(Action: str = "ListUsers",
+                       body: dict = Body(None),
+                       Version: str = Version,
+                       Region: str = Region,
+                       Service: str = Service,
+                       Host: str = Host,
+                       isProxy: bool = True):
+    """
+    调用火山引擎 IAM ListUsers 接口并返回签名结果
+    Args:
+        Action (str, optional): 要调用的 API 操作名称，默认值为 "ListUsers"
+        Version (str, optional): API 版本号，默认值为 Version
+        Region (str, optional): 火山引擎区域，默认值为 Region
+        Service (str, optional): 火山引擎服务名称，默认值为 Service
+        Host (str, optional): API 主机地址，默认值为 Host
+        isProxy (bool, optional): 是否为代理模式，默认值为 True
+    Returns:
+        Dict: 包含请求头和响应体的字典
+    """
+    try:
+        result = proxy(Action,body,Version,Region,Service,Host,isProxy)
+        return result
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e), "message": "请求失败"}
+        )
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
