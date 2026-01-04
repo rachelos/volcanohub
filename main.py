@@ -185,6 +185,11 @@ def proxy(action="ListUsers",body=None,version=Version,region=Region,service=Ser
         body_str = ""
     else:
         body_str = str(body)
+    if service =="iam":
+        host = "iam.volcengineapi.com"
+    elif service =="sts":
+        host = "sts.volcengineapi.com"
+
     response_body = request("POST", now, {"Limit": "2"}, {}, AK, SK, action, body_str,version,region,service,host,isProxy)
     return response_body
 
@@ -199,16 +204,18 @@ def dict_to_jsonstr(data: dict) -> str:
     import json
     return json.dumps(data, ensure_ascii=False)
 
-app = FastAPI(title="火山引擎 IAM API", description="火山引擎 IAM 服务 API 签名接口")
+app = FastAPI(title="火山引擎 HUB API", description="火山引擎HUB服务")
 
 
 @app.post("/", response_model=Dict, summary="火山代理")
-async def api_get_sign(Action: str = "ListUsers",
+async def api_proxy(Action: str = "ListUsers",
                        body: dict = Body(None),
                        Version: str = Version,
                        Region: str = Region,
                        Service: str = Service,
                        Host: str = Host,
+                       _ak:str = AK,
+                       _sk:str = SK,
                        isProxy: bool = True):
     """
     调用火山引擎 IAM ListUsers 接口并返回签名结果
@@ -223,6 +230,15 @@ async def api_get_sign(Action: str = "ListUsers",
         Dict: 包含请求头和响应体的字典
     """
     try:
+        if Action is None:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Action is required", "message": "请提供要调用的 API 操作名称"}
+            )
+        
+        AK = _ak
+        SK = _sk
+
         result = proxy(Action,body,Version,Region,Service,Host,isProxy)
         return result
     except Exception as e:
