@@ -2,6 +2,14 @@
 
 一个基于 FastAPI 的火山引擎 API 签名代理服务，用于调用火山引擎 IAM 及其他服务的 API 接口。
 
+## 一键运行
+
+```bash
+docker run -d -p 8000:8000 \
+  -e VOLCENGINE_AK="your_access_key" \
+  -e VOLCENGINE_SK="your_secret_key" \
+  ghcr.io/volcengine/volcano-api:latest
+```
 ## 功能特性
 
 - 自动计算和添加 HMAC-SHA256 签名
