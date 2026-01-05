@@ -214,6 +214,7 @@ async def home():
 async def api_proxy(Action: str = "ListUsers",
                        body: dict = Body(None),
                        Version: str = Version,
+                       Model:str="jimeng",
                        Region: str = Region,
                        Service: str = Service,
                        Host: str = Host,
@@ -225,6 +226,7 @@ async def api_proxy(Action: str = "ListUsers",
     Args:
         Action (str, optional): 要调用的 API 操作名称，默认值为 "ListUsers"
         Version (str, optional): API 版本号，默认值为 Version
+        Model (str, optional): 模型名称，默认值为 "jimeng"
         Region (str, optional): 火山引擎区域，默认值为 Region
         Service (str, optional): 火山引擎服务名称，默认值为 Service
         Host (str, optional): API 主机地址，默认值为 Host
